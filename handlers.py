@@ -37,12 +37,10 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     text = (
         f"🃏 Текущая карта клуба:\n\n"
-        f"{card.card_name}\n"
         f"ID: {card.card_id} | Ранг: {card.card_rank}\n\n"
         f"🔄 Замен: {card.replacements}\n"
         f"📅 Вложено сегодня: {card.daily_donated}\n"
-        f"👥 Владельцев в клубе: {card.owners_count}\n"
-        f"💫 Желающих: {card.wants_count}"
+        f"👥 Владельцев в клубе: {len(card.club_owners)}"
     )
     
     if card.card_image_url:

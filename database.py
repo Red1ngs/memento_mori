@@ -24,13 +24,10 @@ class ClubCard:
     """Карта клуба."""
     id: int
     card_id: int
-    card_name: str
     card_rank: str
     card_image_url: str
     replacements: str
     daily_donated: str
-    wants_count: int
-    owners_count: int
     club_owners: List[int]  # список mangabuff_id
     discovered_at: str
     is_current: int
@@ -81,18 +78,15 @@ class Booking:
 async def init_db():
     """Создаёт таблицы БД."""
     async with aiosqlite.connect(DB_PATH) as db:
-        # Таблица карт клуба
+        # Таблица карт клуба (ИСПРАВЛЕНО: убраны card_name, wants_count, owners_count)
         await db.execute("""
             CREATE TABLE IF NOT EXISTS club_cards (
                 id              INTEGER PRIMARY KEY AUTOINCREMENT,
                 card_id         INTEGER,
-                card_name       TEXT,
                 card_rank       TEXT,
                 card_image_url  TEXT,
                 replacements    TEXT,
                 daily_donated   TEXT,
-                wants_count     INTEGER,
-                owners_count    INTEGER,
                 club_owners     TEXT,
                 discovered_at   TEXT,
                 is_current      INTEGER DEFAULT 1
@@ -201,23 +195,20 @@ async def get_current_card() -> Optional[ClubCard]:
 
 
 async def insert_card(card_data: Dict[str, Any]) -> int:
-    """Вставляет новую карту."""
+    """Вставляет новую карту (ИСПРАВЛЕНО: без card_name, wants_count, owners_count)."""
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute("""
             INSERT INTO club_cards (
-                card_id, card_name, card_rank, card_image_url,
-                replacements, daily_donated, wants_count, owners_count,
-                club_owners, discovered_at, is_current
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+                card_id, card_rank, card_image_url,
+                replacements, daily_donated, club_owners,
+                discovered_at, is_current
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, 1)
         """, (
             card_data["card_id"],
-            card_data["card_name"],
             card_data["card_rank"],
             card_data["card_image_url"],
             card_data["replacements"],
             card_data["daily_donated"],
-            card_data["wants_count"],
-            card_data["owners_count"],
             json.dumps(card_data["club_owners"]),
             card_data["discovered_at"]
         ))

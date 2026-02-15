@@ -2,9 +2,10 @@
 
 import logging
 import asyncio
-from telegram.ext import Application, MessageHandler, filters, ConversationHandler
+from telegram import Update
+from telegram.ext import Application, MessageHandler, filters, ConversationHandler, ContextTypes
 
-from config import TELEGRAM_BOT_TOKEN, LOGIN_EMAIL, LOGIN_PASSWORD
+from config import TELEGRAM_BOT_TOKEN, LOGIN_EMAIL, LOGIN_PASSWORD, REQUIRED_TG_GROUP_ID
 from database import init_db
 from auth import login
 from proxy_manager import ProxyManager
@@ -28,6 +29,43 @@ logging.basicConfig(
 )
 
 logger = logging.getLogger(__name__)
+
+
+# ══════════════════════════════════════════════════════════════
+# ДИАГНОСТИКА ВХОДЯЩИХ СООБЩЕНИЙ
+# ══════════════════════════════════════════════════════════════
+
+
+async def log_all_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Логирует все входящие сообщения для диагностики."""
+    if update.message:
+        chat_type = update.message.chat.type
+        chat_id = update.message.chat.id
+        user = update.message.from_user
+        text = update.message.text
+        
+        logger.info(
+            f"📨 Сообщение получено:\n"
+            f"   Тип чата: {chat_type}\n"
+            f"   ID чата: {chat_id}\n"
+            f"   От: {user.full_name} (@{user.username}, ID: {user.id})\n"
+            f"   Текст: {text}"
+        )
+        
+        # Проверяем триггер
+        if BOOKING_TRIGGER.search(text or ""):
+            logger.info(f"   ✅ Триггер бронирования обнаружен!")
+            
+            if chat_type in ["group", "supergroup"]:
+                logger.info(f"   ℹ️  Это групповой чат")
+                if chat_id == REQUIRED_TG_GROUP_ID:
+                    logger.info(f"   ✅ Это нужная группа (ID совпадает)")
+                else:
+                    logger.warning(
+                        f"   ⚠️  ID группы не совпадает!\n"
+                        f"      Текущий: {chat_id}\n"
+                        f"      Ожидается: {REQUIRED_TG_GROUP_ID}"
+                    )
 
 
 # ══════════════════════════════════════════════════════════════
@@ -80,6 +118,15 @@ async def main():
     # Регистрация handlers
     logger.info("📝 Регистрация обработчиков...")
     
+    # 0. ДИАГНОСТИКА - логируем ВСЕ сообщения (самый низкий приоритет)
+    application.add_handler(
+        MessageHandler(
+            filters.TEXT & ~filters.COMMAND,
+            log_all_messages
+        ),
+        group=999  # Очень низкий приоритет - выполняется в конце
+    )
+    
     # 1. Регистрация
     application.add_handler(get_registration_handler())
     
@@ -89,13 +136,17 @@ async def main():
     # 3. Команды администратора
     register_admin_handlers(application)
 
-    # 4. FSM бронирования (создаём с entry_points сразу)
-    from booking import start_booking_flow, STEP_DATE, STEP_START_TIME, STEP_END_TIME, receive_date, receive_start_time, receive_end_time, cancel_booking_flow
+    # 4. FSM бронирования - ТОЛЬКО ДЛЯ ЛИЧНЫХ СООБЩЕНИЙ
+    from booking import start_booking_flow, STEP_DATE, STEP_START_TIME, STEP_END_TIME
+    from booking import receive_date, receive_start_time, receive_end_time, cancel_booking_flow
 
-    booking_conv = ConversationHandler(
+    booking_conv_private = ConversationHandler(
         entry_points=[
             MessageHandler(
-                filters.TEXT & filters.Regex(BOOKING_TRIGGER) & ~filters.COMMAND,
+                filters.TEXT & 
+                filters.Regex(BOOKING_TRIGGER) & 
+                filters.ChatType.PRIVATE &  # ТОЛЬКО личные сообщения
+                ~filters.COMMAND,
                 start_booking_flow
             )
         ],
@@ -113,18 +164,53 @@ async def main():
         fallbacks=[
             MessageHandler(filters.Regex(r"^(❌ Отмена|отмена|cancel)$"), cancel_booking_flow)
         ],
-        name="booking",
+        name="booking_private",
         persistent=False,
-        # ВАЖНО: Работает и в ЛС, и в группах
         per_chat=True,
-        per_user=True
+        per_user=True,
+        per_message=False
     )
-    application.add_handler(booking_conv)
+    application.add_handler(booking_conv_private, group=0)
+    
+    # 5. ОТДЕЛЬНЫЙ ОБРАБОТЧИК ДЛЯ ГРУПП - без ConversationHandler
+    async def handle_group_booking_trigger(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Обработчик триггера бронирования в группах."""
+        logger.info("🔔 Триггер бронирования в группе обнаружен!")
+        
+        # Отправляем сообщение с инструкцией
+        await update.message.reply_text(
+            "📅 Для бронирования напиши мне в личные сообщения:\n"
+            f"👉 @{context.bot.username}\n\n"
+            "Или нажми /start и следуй инструкциям."
+        )
+        
+        logger.info("✅ Ответ в группу отправлен")
+    
+    application.add_handler(
+        MessageHandler(
+            filters.TEXT & 
+            filters.Regex(BOOKING_TRIGGER) & 
+            (filters.ChatType.GROUP | filters.ChatType.SUPERGROUP) &  # ТОЛЬКО группы
+            ~filters.COMMAND,
+            handle_group_booking_trigger
+        ),
+        group=0  # Тот же приоритет, что и ConversationHandler
+    )
     
     # 6. Callback для подтверждения брони
     application.add_handler(get_confirm_booking_handler())
     
     logger.info("✅ Обработчики зарегистрированы")
+    logger.info("")
+    logger.info("=" * 60)
+    logger.info("⚠️  КРИТИЧЕСКИ ВАЖНО ДЛЯ РАБОТЫ В ГРУППАХ:")
+    logger.info("=" * 60)
+    logger.info("1. Откройте @BotFather")
+    logger.info("2. Отправьте: /mybots")
+    logger.info("3. Выберите вашего бота")
+    logger.info("4. Bot Settings → Group Privacy → Turn off")
+    logger.info("=" * 60)
+    logger.info("")
     
     # Инициализация планировщика броней
     scheduler = init_scheduler(application.bot)

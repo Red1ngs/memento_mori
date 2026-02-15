@@ -73,10 +73,9 @@ async def send_card_notification(
             logger.debug(f"Пользователь {user.tg_nickname} не верифицирован")
             return False
         
-        # Формируем сообщение
+        # Формируем сообщение (ИСПРАВЛЕНО: без card_name)
         text = (
             f"🔴 У вас есть нужная карта клуба!\n\n"
-            f"{card_data['card_name']}\n"
             f"ID: {card_data['card_id']} | Ранг: {card_data['card_rank']}\n\n"
             f"🎯 Аккаунт: {user.mangabuff_nick}\n"
             f"🔄 Замен: {card_data['replacements']}\n"

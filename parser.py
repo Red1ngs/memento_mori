@@ -49,25 +49,19 @@ class BoostPageParser:
                 logger.error("Не удалось извлечь card_id")
                 return None
             
-            card_name = self._extract_card_name(soup)
             card_image_url = self._extract_card_image(soup)
             replacements = self._extract_replacements(soup)
             daily_donated = self._extract_daily_donated(soup)
-            wants_count = self._extract_wants_count(soup)
-            owners_count = self._extract_owners_count(soup)
             club_owners = self._extract_club_owners(soup)
             
             # НЕ определяем ранг здесь - это будет делаться в parse_loop только при смене карты
             
             return {
                 "card_id": card_id,
-                "card_name": card_name,
                 "card_rank": "?",  # Будет установлен позже в parse_loop
                 "card_image_url": card_image_url,
                 "replacements": replacements,
                 "daily_donated": daily_donated,
-                "wants_count": wants_count,
-                "owners_count": owners_count,
                 "club_owners": club_owners,
                 "discovered_at": ts_for_db(now_msk())
             }
@@ -85,24 +79,6 @@ class BoostPageParser:
             if match:
                 return int(match.group(1))
         return None
-    
-    def _extract_card_name(self, soup: BeautifulSoup) -> str:
-        """Извлекает название карты."""
-        # Пробуем найти в alt изображения
-        img = soup.select_one('.club-boost__image img')
-        if img:
-            alt = img.get("alt", "").strip()
-            if alt:
-                return alt
-        
-        # Пробуем найти в тексте рядом с изображением
-        container = soup.select_one('.club-boost__image')
-        if container:
-            text = container.get_text(strip=True)
-            if text:
-                return text
-        
-        return "Неизвестная карта"
     
     def _extract_card_image(self, soup: BeautifulSoup) -> str:
         """Извлекает URL изображения карты."""
@@ -135,23 +111,6 @@ class BoostPageParser:
             # Берём второе совпадение (первое - замены)
             return f"{matches[1][0]}/{matches[1][1]}"
         return "0/50"
-    
-    def _extract_wants_count(self, soup: BeautifulSoup) -> int:
-        """Извлекает количество желающих карту."""
-        # Ищем элемент с количеством желающих
-        wants = soup.select_one('.club-boost__wants, .wants-count')
-        if wants:
-            text = wants.get_text(strip=True)
-            match = re.search(r'\d+', text)
-            if match:
-                return int(match.group())
-        return 0
-    
-    def _extract_owners_count(self, soup: BeautifulSoup) -> int:
-        """Извлекает количество владельцев карты."""
-        # Считаем элементы в списке владельцев
-        owners = soup.select('.club-boost__owners-list .club-boost__user')
-        return len(owners)
     
     def _extract_club_owners(self, soup: BeautifulSoup) -> List[int]:
         """Извлекает список ID владельцев карты из клуба."""
@@ -221,8 +180,7 @@ async def parse_loop(session: requests.Session, bot, rank_detector: RankDetector
                     await notify_owners(bot, data)
                     
                     logger.info(
-                        f"✅ Новая карта: {data['card_name']} "
-                        f"(ID: {data['card_id']}, Ранг: {data['card_rank']})"
+                        f"✅ Новая карта ID {data['card_id']} (Ранг: {data['card_rank']})"
                     )
             
         except Exception as e:
