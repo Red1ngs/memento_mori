@@ -193,10 +193,10 @@ async def get_current_card() -> Optional[ClubCard]:
         ) as cursor:
             row = await cursor.fetchone()
             if row:
-                return ClubCard(
-                    **dict(row),
-                    club_owners=json.loads(row["club_owners"]) if row["club_owners"] else []
-                )
+                row_dict = dict(row)
+                # Парсим JSON для club_owners
+                row_dict["club_owners"] = json.loads(row_dict["club_owners"]) if row_dict["club_owners"] else []
+                return ClubCard(**row_dict)
     return None
 
 

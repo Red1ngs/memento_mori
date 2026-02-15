@@ -2,7 +2,7 @@
 
 import logging
 import asyncio
-from telegram.ext import Application, MessageHandler, filters
+from telegram.ext import Application, MessageHandler, filters, ConversationHandler
 
 from config import TELEGRAM_BOT_TOKEN, LOGIN_EMAIL, LOGIN_PASSWORD
 from database import init_db
@@ -88,25 +88,37 @@ async def main():
     
     # 3. Команды администратора
     register_admin_handlers(application)
-    
-    # 4. Триггер бронирования (должен быть ДО ConversationHandler)
-    application.add_handler(
-        MessageHandler(
-            filters.TEXT & filters.Regex(BOOKING_TRIGGER) & ~filters.COMMAND,
-            booking_trigger_handler
-        )
+
+    # 4. FSM бронирования (создаём с entry_points сразу)
+    from booking import start_booking_flow, STEP_DATE, STEP_START_TIME, STEP_END_TIME, receive_date, receive_start_time, receive_end_time, cancel_booking_flow
+
+    booking_conv = ConversationHandler(
+        entry_points=[
+            MessageHandler(
+                filters.TEXT & filters.Regex(BOOKING_TRIGGER) & ~filters.COMMAND,
+                start_booking_flow
+            )
+        ],
+        states={
+            STEP_DATE: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_date)
+            ],
+            STEP_START_TIME: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_start_time)
+            ],
+            STEP_END_TIME: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_end_time)
+            ]
+        },
+        fallbacks=[
+            MessageHandler(filters.Regex(r"^(❌ Отмена|отмена|cancel)$"), cancel_booking_flow)
+        ],
+        name="booking",
+        persistent=False,
+        # ВАЖНО: Работает и в ЛС, и в группах
+        per_chat=True,
+        per_user=True
     )
-    
-    # 5. FSM бронирования
-    booking_conv = get_booking_conversation_handler()
-    # Добавляем entry_points вручную, т.к. они запускаются через триггер
-    from booking import start_booking_flow, STEP_DATE
-    booking_conv.entry_points = [
-        MessageHandler(
-            filters.TEXT & filters.Regex(BOOKING_TRIGGER) & ~filters.COMMAND,
-            start_booking_flow
-        )
-    ]
     application.add_handler(booking_conv)
     
     # 6. Callback для подтверждения брони
@@ -121,26 +133,23 @@ async def main():
     logger.info("🚀 Запуск Telegram-бота...")
     await application.initialize()
     await application.start()
-    await application.updater.start_polling()
-    
+    await application.updater.start_polling(drop_pending_updates=True)
+
     logger.info("✅ Бот запущен и готов к работе")
-    
+
     # Запуск фонового парсера
     logger.info("🔄 Запуск фонового парсера...")
     parse_task = asyncio.create_task(
         parse_loop(session, application.bot, rank_detector)
     )
-    
+
     logger.info("=" * 60)
     logger.info("✅ ВСЕ СИСТЕМЫ ЗАПУЩЕНЫ")
     logger.info("=" * 60)
-    
+
     try:
-        # Ожидаем завершения
-        await asyncio.gather(
-            parse_task,
-            application.updater.start_polling(drop_pending_updates=True)
-        )
+        # Ожидаем завершения парсера (бот уже запущен через start_polling)
+        await parse_task
     except KeyboardInterrupt:
         logger.info("⏹ Получен сигнал остановки")
     finally:

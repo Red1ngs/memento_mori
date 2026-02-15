@@ -26,7 +26,7 @@ class BoostPageParser:
         self.session = session
         self.rank_detector = rank_detector
         self.url = f"{BASE_URL}{CLUB_BOOST_PATH}"
-    
+        
     def parse(self) -> Optional[Dict[str, Any]]:
         """
         Парсит страницу boost.
@@ -57,18 +57,12 @@ class BoostPageParser:
             owners_count = self._extract_owners_count(soup)
             club_owners = self._extract_club_owners(soup)
             
-            # Определяем ранг
-            card_rank = "?"
-            if card_image_url and self.rank_detector.is_ready:
-                card_rank = self.rank_detector.detect_from_url(
-                    card_image_url,
-                    session=self.session
-                )
+            # НЕ определяем ранг здесь - это будет делаться в parse_loop только при смене карты
             
             return {
                 "card_id": card_id,
                 "card_name": card_name,
-                "card_rank": card_rank,
+                "card_rank": "?",  # Будет установлен позже в parse_loop
                 "card_image_url": card_image_url,
                 "replacements": replacements,
                 "daily_donated": daily_donated,
@@ -193,19 +187,28 @@ async def parse_loop(session: requests.Session, bot, rank_detector: RankDetector
     
     while True:
         try:
-            # Парсим страницу
+            # Получаем текущую карту из БД перед парсингом
+            current = await get_current_card()
+            
+            # Парсим страницу (без определения ранга)
             data = parser.parse()
             
             if data:
-                # Получаем текущую карту из БД
-                current = await get_current_card()
-                
                 # Проверяем, изменилась ли карта
                 if current is None or current.card_id != data["card_id"]:
                     logger.info(
                         f"🔄 Обнаружена смена карты: "
                         f"{current.card_id if current else 'None'} → {data['card_id']}"
                     )
+                    
+                    # Определяем ранг только для новой карты
+                    if data["card_image_url"] and rank_detector.is_ready:
+                        data["card_rank"] = rank_detector.detect_from_url(
+                            data["card_image_url"],
+                            session=session
+                        )
+                    else:
+                        data["card_rank"] = "?"
                     
                     # Архивируем старую карту
                     if current:

@@ -53,7 +53,7 @@ class ProxyManager:
     
     def _find_working_proxy(self) -> Optional[Dict[str, str]]:
         """Ищет рабочий прокси из указанных стран."""
-        max_attempts = 5
+        max_attempts = 2
         
         for attempt in range(max_attempts):
             try:

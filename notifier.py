@@ -133,7 +133,7 @@ async def send_booking_reminder(bot: Bot, booking: Booking) -> bool:
     try:
         text = (
             f"⏰ Твоя бронь начинается через 5 минут!\n\n"
-            f"🃏 Внос карт в клуб Таро\n"
+            f"🃏 Внос карт в клуб\n"
             f"📅 {format_date_ru(booking.date)} | "
             f"🕐 {format_time_range(booking.start_time, booking.end_time)}\n\n"
             f"Подтверди участие — иначе бронь будет отменена\n"

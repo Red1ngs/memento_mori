@@ -17,7 +17,8 @@ from database import (
     add_booking_event
 )
 from schedule_view import format_all_history, format_user_history
-from notifier import send_booking_cancelled_to_user, notify_group_booking_cancelled, mark_group_notified
+from notifier import send_booking_cancelled_to_user, notify_group_booking_cancelled
+from database import mark_group_notified
 
 logger = logging.getLogger(__name__)
 

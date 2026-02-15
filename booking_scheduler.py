@@ -17,9 +17,9 @@ from database import (
 from notifier import (
     send_booking_reminder,
     send_booking_cancelled_to_user,
-    notify_group_booking_cancelled,
-    mark_group_notified
+    notify_group_booking_cancelled
 )
+from database import mark_group_notified
 from timezone_utils import now_msk, parse_booking_dt, minutes_until, ts_for_db
 
 logger = logging.getLogger(__name__)

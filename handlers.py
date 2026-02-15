@@ -16,7 +16,8 @@ from database import (
 )
 from timezone_utils import get_today_date, get_tomorrow_date, format_date_ru, ts_for_db, now_msk
 from schedule_view import format_schedule, format_user_history, format_user_bookings
-from notifier import send_booking_cancelled_to_user, notify_group_booking_cancelled, mark_group_notified
+from notifier import send_booking_cancelled_to_user, notify_group_booking_cancelled
+from database import mark_group_notified
 
 logger = logging.getLogger(__name__)
 

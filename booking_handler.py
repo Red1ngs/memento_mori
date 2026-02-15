@@ -83,7 +83,7 @@ async def confirm_booking_callback(update: Update, context: ContextTypes.DEFAULT
     # Обновляем сообщение
     await query.edit_message_text(
         f"✅ Бронь подтверждена!\n\n"
-        f"🃏 Внос карт в клуб Таро\n"
+        f"🃏 Внос карт в клуб \n"
         f"📅 {format_date_ru(booking.date)}\n"
         f"🕐 {format_time_range(booking.start_time, booking.end_time)}\n\n"
         f"Удачного вноса! 🚀"

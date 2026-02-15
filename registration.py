@@ -49,11 +49,11 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Приветствие
     await update.message.reply_text(
-        "👋 Привет! Я бот клуба Таро на MangaBuff.\n\n"
+        "👋 Привет! Я бот клуба на MangaBuff.\n\n"
         "Чтобы получать уведомления о картах клуба,\n"
         "привяжи свой аккаунт MangaBuff.\n\n"
         "Отправь ссылку на свой профиль в формате:\n"
-        "https://mangabuff.ru/users/102979"
+        "https://mangabuff.ru/users/***"
     )
     
     return WAITING_FOR_URL
@@ -70,7 +70,7 @@ async def receive_url(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             "❌ Неверный формат ссылки.\n"
             "Отправь ссылку в формате:\n"
-            "https://mangabuff.ru/users/102979"
+            "https://mangabuff.ru/users/***"
         )
         return WAITING_FOR_URL
     
@@ -115,7 +115,7 @@ async def receive_url(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_member:
         await update.message.reply_text(
             f"❌ Аккаунт https://mangabuff.ru/users/{mangabuff_id}\n"
-            f"не найден в клубе Таро.\n\n"
+            f"не найден в клубе.\n\n"
             f"Убедись, что ты вступил в клуб и попробуй снова через /start"
         )
         return ConversationHandler.END

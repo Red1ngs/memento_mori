@@ -14,7 +14,7 @@ load_dotenv()
 
 BASE_URL = os.getenv("BASE_URL", "https://mangabuff.ru")
 CLUB_BOOST_PATH = os.getenv("CLUB_BOOST_PATH", "")
-CLUB_PAGE_PATH = os.getenv("CLUB_PAGE_PATH""")
+CLUB_PAGE_PATH = os.getenv("CLUB_PAGE_PATH", "")
 
 # ══════════════════════════════════════════════════════════════
 # АВТОРИЗАЦИЯ

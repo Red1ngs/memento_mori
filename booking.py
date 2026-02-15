@@ -1,7 +1,7 @@
 """FSM бронирования."""
 
 import logging
-from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove
+from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove, KeyboardButton
 from telegram.ext import (
     ContextTypes,
     ConversationHandler,
@@ -82,7 +82,8 @@ async def start_booking_flow(update: Update, context: ContextTypes.DEFAULT_TYPE)
     
     # Предлагаем выбрать дату
     keyboard = [
-        [f"📅 Сегодня, {format_date_ru(today)}", f"📅 Завтра, {format_date_ru(tomorrow)}"]
+        [f"📅 Сегодня, {format_date_ru(today)}", f"📅 Завтра, {format_date_ru(tomorrow)}"],
+        ["❌ Отмена"]
     ]
     
     await update.message.reply_text(
@@ -96,6 +97,10 @@ async def start_booking_flow(update: Update, context: ContextTypes.DEFAULT_TYPE)
 async def receive_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработка выбора даты."""
     text = update.message.text
+    
+    # Проверка на отмену
+    if text == "❌ Отмена":
+        return await cancel_booking_flow(update, context)
     
     # Определяем выбранную дату
     today = get_today_date()
@@ -130,6 +135,7 @@ async def receive_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Формируем клавиатуру со слотами
     keyboard = format_time_slots_keyboard(available_slots, per_row=4)
+    keyboard.append(["◀️ Назад", "❌ Отмена"])
     
     await update.message.reply_text(
         f"🕐 Выбери время начала брони:\n"
@@ -142,7 +148,17 @@ async def receive_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def receive_start_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработка выбора времени начала."""
-    start_time = update.message.text.strip()
+    text = update.message.text
+    
+    # Проверка на отмену
+    if text == "❌ Отмена":
+        return await cancel_booking_flow(update, context)
+    
+    # Проверка на "Назад"
+    if text == "◀️ Назад":
+        return await start_booking_flow(update, context)
+    
+    start_time = text.strip()
     
     # Валидация формата времени
     if not start_time or ":" not in start_time:
@@ -171,6 +187,7 @@ async def receive_start_time(update: Update, context: ContextTypes.DEFAULT_TYPE)
     
     # Формируем клавиатуру
     keyboard = format_time_slots_keyboard(available_slots, per_row=4)
+    keyboard.append(["◀️ Назад", "❌ Отмена"])
     
     await update.message.reply_text(
         f"🕐 Начало: {start_time}\n"
@@ -183,7 +200,33 @@ async def receive_start_time(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 async def receive_end_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработка выбора времени окончания и создание брони."""
-    end_time = update.message.text.strip()
+    text = update.message.text
+    
+    # Проверка на отмену
+    if text == "❌ Отмена":
+        return await cancel_booking_flow(update, context)
+    
+    # Проверка на "Назад"
+    if text == "◀️ Назад":
+        # Возвращаемся к выбору времени начала
+        context.user_data.pop("booking_start_time", None)
+        
+        selected_date = context.user_data["booking_date"]
+        busy_bookings = await get_bookings_for_schedule([selected_date])
+        available_slots = get_available_start_slots(selected_date, busy_bookings)
+        
+        keyboard = format_time_slots_keyboard(available_slots, per_row=4)
+        keyboard.append(["◀️ Назад", "❌ Отмена"])
+        
+        await update.message.reply_text(
+            f"🕐 Выбери время начала брони:\n"
+            f"(максимальная длительность — 2 часа)",
+            reply_markup=ReplyKeyboardMarkup(keyboard, one_time_keyboard=True, resize_keyboard=True)
+        )
+        
+        return STEP_START_TIME
+    
+    end_time = text.strip()
     
     # Валидация формата времени
     if not end_time or ":" not in end_time:
@@ -281,7 +324,7 @@ def get_booking_conversation_handler() -> ConversationHandler:
             ]
         },
         fallbacks=[
-            MessageHandler(filters.Regex(r"^(отмена|cancel)$"), cancel_booking_flow)
+            MessageHandler(filters.Regex(r"^(❌ Отмена|отмена|cancel)$"), cancel_booking_flow)
         ],
         name="booking",
         persistent=False

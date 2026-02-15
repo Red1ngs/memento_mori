@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 # НАСТРОЙКИ
 # ══════════════════════════════════════════════════════════════
 
-RANKS_DIR: Path = Path(__file__).parent.parent / 'ranks'
+RANKS_DIR: Path = Path(__file__).parent / 'ranks'
 TARGET_SIZE: Tuple[int, int] = (288, 432)
 
 # ────────────────────────────────────────────────────────────
