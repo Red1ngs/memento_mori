@@ -26,7 +26,7 @@ BOOKING_TRIGGER = re.compile(
 async def booking_trigger_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     Обработчик триггерных слов для бронирования.
-    
+
     Вызывает start_booking_flow из booking.py
     """
     return await start_booking_flow(update, context)
@@ -41,23 +41,20 @@ async def confirm_booking_callback(update: Update, context: ContextTypes.DEFAULT
     """Обработчик callback для подтверждения брони."""
     query = update.callback_query
     await query.answer()
-    
-    # Извлекаем booking_id из callback_data
+
     # Формат: "confirm_booking:123"
     try:
         booking_id = int(query.data.split(":")[1])
     except (IndexError, ValueError):
         await query.edit_message_text("❌ Ошибка: неверный формат данных")
         return
-    
-    # Получаем бронь
+
     booking = await get_booking(booking_id)
-    
+
     if not booking:
         await query.edit_message_text("❌ Бронь не найдена")
         return
-    
-    # Проверяем статус
+
     if booking.status != "pending":
         status_text = {
             "confirmed": "уже подтверждена",
@@ -66,10 +63,10 @@ async def confirm_booking_callback(update: Update, context: ContextTypes.DEFAULT
             "cancelled_by_admin": "отменена администратором",
             "completed": "завершена"
         }.get(booking.status, "неактивна")
-        
+
         await query.edit_message_text(f"❌ Бронь {status_text}")
         return
-    
+
     # Подтверждаем бронь
     confirmed_at = ts_for_db(now_msk())
     await confirm_booking(booking_id, confirmed_at)
@@ -79,8 +76,7 @@ async def confirm_booking_callback(update: Update, context: ContextTypes.DEFAULT
         "user",
         actor_tg_id=query.from_user.id
     )
-    
-    # Обновляем сообщение
+
     await query.edit_message_text(
         f"✅ Бронь подтверждена!\n\n"
         f"🃏 Внос карт в клуб \n"
@@ -88,7 +84,7 @@ async def confirm_booking_callback(update: Update, context: ContextTypes.DEFAULT
         f"🕐 {format_time_range(booking.start_time, booking.end_time)}\n\n"
         f"Удачного вноса! 🚀"
     )
-    
+
     logger.info(f"✅ Бронь #{booking_id} подтверждена пользователем {query.from_user.id}")
 
 

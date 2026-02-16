@@ -1,5 +1,6 @@
 """FSM регистрации пользователей."""
 
+import asyncio
 import logging
 import re
 from telegram import Update
@@ -35,7 +36,7 @@ MANGABUFF_URL_PATTERN = re.compile(
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик команды /start."""
     user = update.effective_user
-    
+
     # Проверяем, зарегистрирован ли уже
     db_user = await get_user(user.id)
     if db_user and db_user.is_verified:
@@ -46,8 +47,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"Используй /myaccount для просмотра данных."
         )
         return ConversationHandler.END
-    
-    # Приветствие
+
     await update.message.reply_text(
         "👋 Привет! Я бот клуба на MangaBuff.\n\n"
         "Чтобы получать уведомления о картах клуба,\n"
@@ -55,7 +55,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Отправь ссылку на свой профиль в формате:\n"
         "https://mangabuff.ru/users/***"
     )
-    
+
     return WAITING_FOR_URL
 
 
@@ -63,7 +63,7 @@ async def receive_url(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик получения URL профиля."""
     user = update.effective_user
     url = update.message.text.strip()
-    
+
     # Валидация формата URL
     match = MANGABUFF_URL_PATTERN.match(url)
     if not match:
@@ -73,23 +73,23 @@ async def receive_url(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "https://mangabuff.ru/users/***"
         )
         return WAITING_FOR_URL
-    
+
     mangabuff_id = int(match.group(1))
-    
+
     # Проверка 1: Членство в TG-группе
     try:
         member = await context.bot.get_chat_member(
             chat_id=REQUIRED_TG_GROUP_ID,
             user_id=user.id
         )
-        
+
         if member.status not in ["member", "administrator", "creator"]:
             await update.message.reply_text(
                 f"❌ Ты не состоишь в Telegram-группе клуба.\n\n"
                 f"попробуй снова через /start"
             )
             return ConversationHandler.END
-            
+
     except Exception as e:
         logger.error(f"Ошибка проверки членства в группе: {e}")
         await update.message.reply_text(
@@ -97,11 +97,10 @@ async def receive_url(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Попробуй позже."
         )
         return ConversationHandler.END
-    
+
     # Проверка 2: Членство в клубе на сайте
     await update.message.reply_text("⏳ Проверяю членство в клубе...")
-    
-    # Получаем сессию из context
+
     session = context.bot_data.get("session")
     if not session:
         await update.message.reply_text(
@@ -109,9 +108,22 @@ async def receive_url(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Попробуй позже."
         )
         return ConversationHandler.END
-    
-    is_member, mangabuff_nick = check_club_membership(session, mangabuff_id)
-    
+
+    # check_club_membership синхронный (requests) — выносим в executor,
+    # чтобы не блокировать event loop
+    loop = asyncio.get_event_loop()
+    try:
+        is_member, mangabuff_nick = await loop.run_in_executor(
+            None, check_club_membership, session, mangabuff_id
+        )
+    except Exception as e:
+        logger.error(f"Ошибка при проверке членства в клубе: {e}")
+        await update.message.reply_text(
+            "❌ Ошибка при проверке членства в клубе.\n"
+            "Попробуй позже."
+        )
+        return ConversationHandler.END
+
     if not is_member:
         await update.message.reply_text(
             f"❌ Аккаунт https://mangabuff.ru/users/{mangabuff_id}\n"
@@ -119,8 +131,8 @@ async def receive_url(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"Убедись, что ты вступил в клуб и попробуй снова через /start"
         )
         return ConversationHandler.END
-    
-    # Обе проверки пройдены - сохраняем пользователя
+
+    # Обе проверки пройдены — сохраняем пользователя
     await upsert_user(
         tg_id=user.id,
         tg_username=user.username,
@@ -132,7 +144,7 @@ async def receive_url(update: Update, context: ContextTypes.DEFAULT_TYPE):
         is_active=1,
         created_at=ts_for_db(now_msk())
     )
-    
+
     await update.message.reply_text(
         f"✅ Аккаунт успешно привязан!\n\n"
         f"👤 MangaBuff: {mangabuff_nick or f'User{mangabuff_id}'}\n"
@@ -140,12 +152,12 @@ async def receive_url(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"Теперь ты будешь получать уведомления,\n"
         f"когда в клубе появится карта, которая есть у тебя."
     )
-    
+
     logger.info(
         f"✅ Пользователь зарегистрирован: {user.full_name} "
         f"(TG: {user.id}, MB: {mangabuff_id})"
     )
-    
+
     return ConversationHandler.END
 
 

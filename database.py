@@ -6,6 +6,7 @@ from typing import Optional, List, Dict, Any
 from dataclasses import dataclass
 from datetime import datetime
 import aiosqlite
+from aiosqlite import IntegrityError
 
 from timezone_utils import ts_for_db, now_msk
 
@@ -28,7 +29,7 @@ class ClubCard:
     card_image_url: str
     replacements: str
     daily_donated: str
-    club_owners: List[int]  # список mangabuff_id
+    club_owners: List[int]
     discovered_at: str
     is_current: int
 
@@ -71,6 +72,16 @@ class Booking:
 
 
 # ══════════════════════════════════════════════════════════════
+# ИСКЛЮЧЕНИЯ
+# ══════════════════════════════════════════════════════════════
+
+
+class BookingConflictError(Exception):
+    """Бронь на эту дату уже существует (нарушение UNIQUE индекса)."""
+    pass
+
+
+# ══════════════════════════════════════════════════════════════
 # ИНИЦИАЛИЗАЦИЯ БД
 # ══════════════════════════════════════════════════════════════
 
@@ -78,7 +89,6 @@ class Booking:
 async def init_db():
     """Создаёт таблицы БД."""
     async with aiosqlite.connect(DB_PATH) as db:
-        # Таблица карт клуба (ИСПРАВЛЕНО: убраны card_name, wants_count, owners_count)
         await db.execute("""
             CREATE TABLE IF NOT EXISTS club_cards (
                 id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -92,8 +102,7 @@ async def init_db():
                 is_current      INTEGER DEFAULT 1
             )
         """)
-        
-        # Таблица пользователей
+
         await db.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -108,8 +117,7 @@ async def init_db():
                 created_at      TEXT
             )
         """)
-        
-        # Таблица броней
+
         await db.execute("""
             CREATE TABLE IF NOT EXISTS bookings (
                 id                  INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -132,8 +140,7 @@ async def init_db():
                 FOREIGN KEY (tg_id) REFERENCES users(tg_id)
             )
         """)
-        
-        # Таблица событий броней
+
         await db.execute("""
             CREATE TABLE IF NOT EXISTS booking_events (
                 id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -146,29 +153,30 @@ async def init_db():
                 FOREIGN KEY (booking_id) REFERENCES bookings(id)
             )
         """)
-        
-        # Индексы
+
+        # Partial index: одна активная бронь на пользователя в день
+        # Требует SQLite >= 3.8.0
         await db.execute("""
             CREATE UNIQUE INDEX IF NOT EXISTS idx_one_booking_per_day
             ON bookings(tg_id, date)
             WHERE status IN ('pending', 'confirmed')
         """)
-        
+
         await db.execute("""
             CREATE INDEX IF NOT EXISTS idx_bookings_date_status
             ON bookings(date, status)
         """)
-        
+
         await db.execute("""
             CREATE INDEX IF NOT EXISTS idx_bookings_tg_id
             ON bookings(tg_id, created_at DESC)
         """)
-        
+
         await db.execute("""
             CREATE INDEX IF NOT EXISTS idx_events_booking_id
             ON booking_events(booking_id, event_at DESC)
         """)
-        
+
         await db.commit()
         logger.info("✅ База данных инициализирована")
 
@@ -188,14 +196,13 @@ async def get_current_card() -> Optional[ClubCard]:
             row = await cursor.fetchone()
             if row:
                 row_dict = dict(row)
-                # Парсим JSON для club_owners
                 row_dict["club_owners"] = json.loads(row_dict["club_owners"]) if row_dict["club_owners"] else []
                 return ClubCard(**row_dict)
     return None
 
 
 async def insert_card(card_data: Dict[str, Any]) -> int:
-    """Вставляет новую карту (ИСПРАВЛЕНО: без card_name, wants_count, owners_count)."""
+    """Вставляет новую карту."""
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute("""
             INSERT INTO club_cards (
@@ -267,7 +274,7 @@ async def upsert_user(
     """Создаёт или обновляет пользователя."""
     if created_at is None:
         created_at = ts_for_db(now_msk())
-    
+
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("""
             INSERT INTO users (
@@ -305,7 +312,7 @@ async def toggle_user_active(tg_id: int) -> bool:
             row = await cursor.fetchone()
             if not row:
                 return False
-            
+
             new_value = 0 if row[0] == 1 else 1
             await db.execute(
                 "UPDATE users SET is_active = ? WHERE tg_id = ?",
@@ -338,31 +345,45 @@ async def create_booking(
     end_time: str,
     duration_hours: float
 ) -> int:
-    """Создаёт бронь."""
+    """
+    Создаёт бронь.
+
+    Raises:
+        BookingConflictError: если у пользователя уже есть активная бронь на эту дату
+    """
     created_at = ts_for_db(now_msk())
-    
-    async with aiosqlite.connect(DB_PATH) as db:
-        cursor = await db.execute("""
-            INSERT INTO bookings (
+
+    try:
+        async with aiosqlite.connect(DB_PATH) as db:
+            cursor = await db.execute("""
+                INSERT INTO bookings (
+                    tg_id, tg_nickname, mangabuff_nick, date,
+                    start_time, end_time, duration_hours,
+                    status, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?)
+            """, (
                 tg_id, tg_nickname, mangabuff_nick, date,
-                start_time, end_time, duration_hours,
-                status, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?)
-        """, (
-            tg_id, tg_nickname, mangabuff_nick, date,
-            start_time, end_time, duration_hours, created_at
-        ))
-        booking_id = cursor.lastrowid
-        
-        # Добавляем событие
-        await db.execute("""
-            INSERT INTO booking_events (
-                booking_id, event_type, actor_tg_id, actor_label, event_at
-            ) VALUES (?, 'created', ?, 'user', ?)
-        """, (booking_id, tg_id, created_at))
-        
-        await db.commit()
-        return booking_id
+                start_time, end_time, duration_hours, created_at
+            ))
+            booking_id = cursor.lastrowid
+
+            await db.execute("""
+                INSERT INTO booking_events (
+                    booking_id, event_type, actor_tg_id, actor_label, event_at
+                ) VALUES (?, 'created', ?, 'user', ?)
+            """, (booking_id, tg_id, created_at))
+
+            await db.commit()
+            return booking_id
+
+    except IntegrityError as e:
+        # Нарушение UNIQUE индекса: активная бронь на эту дату уже существует
+        logger.warning(
+            f"Конфликт при создании брони: tg_id={tg_id}, date={date} — {e}"
+        )
+        raise BookingConflictError(
+            f"У пользователя уже есть активная бронь на {date}"
+        ) from e
 
 
 async def get_booking(booking_id: int) -> Optional[Booking]:
@@ -385,7 +406,7 @@ async def get_user_active_bookings(tg_id: int, dates: List[str]) -> List[Booking
           AND status IN ('pending', 'confirmed')
         ORDER BY date, start_time
     """
-    
+
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(query, (tg_id, *dates)) as cursor:
@@ -402,7 +423,7 @@ async def get_bookings_for_schedule(dates: List[str]) -> List[Booking]:
           AND status IN ('pending', 'confirmed')
         ORDER BY date, start_time
     """
-    
+
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(query, dates) as cursor:
@@ -435,7 +456,7 @@ async def cancel_booking(
         "system": "cancelled"
     }
     status = status_map.get(cancelled_by, "cancelled")
-    
+
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("""
             UPDATE bookings
@@ -485,7 +506,7 @@ async def add_booking_event(
 ):
     """Добавляет событие брони."""
     event_at = ts_for_db(now_msk())
-    
+
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("""
             INSERT INTO booking_events (
@@ -566,7 +587,7 @@ async def check_booking_conflict(
 ) -> bool:
     """
     Проверяет конфликт броней.
-    
+
     Returns:
         True если есть конфликт
     """
@@ -577,12 +598,80 @@ async def check_booking_conflict(
           AND NOT (end_time <= ? OR start_time >= ?)
     """
     params = [date, start_time, end_time]
-    
+
     if exclude_booking_id:
         query += " AND id != ?"
         params.append(exclude_booking_id)
-    
+
     async with aiosqlite.connect(DB_PATH) as db:
         async with db.execute(query, params) as cursor:
             row = await cursor.fetchone()
             return row[0] > 0
+
+
+# ══════════════════════════════════════════════════════════════
+# АЛЬЯНС
+# ══════════════════════════════════════════════════════════════
+
+
+async def _ensure_alliance_table():
+    """Создаёт таблицу альянса если её нет (миграция для существующих БД)."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS alliance_history (
+                id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                slug          TEXT NOT NULL,
+                title         TEXT,
+                image_url     TEXT,
+                manga_url     TEXT,
+                discovered_at TEXT NOT NULL
+            )
+        """)
+        await db.execute("""
+            CREATE INDEX IF NOT EXISTS idx_alliance_history_discovered
+            ON alliance_history(discovered_at DESC)
+        """)
+        await db.commit()
+
+
+async def get_current_alliance_manga() -> Optional[dict]:
+    """Возвращает последнюю запись из истории альянса или None."""
+    await _ensure_alliance_table()
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("""
+            SELECT * FROM alliance_history
+            ORDER BY id DESC LIMIT 1
+        """) as cursor:
+            row = await cursor.fetchone()
+            return dict(row) if row else None
+
+
+async def save_alliance_manga(manga_info: dict):
+    """Сохраняет новый тайтл альянса в историю."""
+    await _ensure_alliance_table()
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("""
+            INSERT INTO alliance_history (slug, title, image_url, manga_url, discovered_at)
+            VALUES (?, ?, ?, ?, ?)
+        """, (
+            manga_info.get("slug"),
+            manga_info.get("title"),
+            manga_info.get("image"),
+            manga_info.get("url"),
+            manga_info.get("discovered_at", ts_for_db(now_msk()))
+        ))
+        await db.commit()
+
+
+async def get_alliance_history(limit: int = 20) -> list:
+    """Возвращает историю тайтлов альянса."""
+    await _ensure_alliance_table()
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("""
+            SELECT * FROM alliance_history
+            ORDER BY id DESC LIMIT ?
+        """, (limit,)) as cursor:
+            rows = await cursor.fetchall()
+            return [dict(row) for row in rows]

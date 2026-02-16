@@ -2,7 +2,6 @@
 
 import os
 import pytz
-from datetime import datetime
 from dotenv import load_dotenv
 
 # Загружаем переменные окружения
@@ -30,10 +29,22 @@ LOGIN_PASSWORD = os.getenv("LOGIN_PASSWORD", "")
 PROXY_COUNTRIES = os.getenv("PROXY_COUNTRIES", "RU,UA,BY").split(",")
 
 # ══════════════════════════════════════════════════════════════
-# ПАРСИНГ
+# ПАРСИНГ — КАРТЫ КЛУБА
 # ══════════════════════════════════════════════════════════════
 
 PARSE_INTERVAL_SECONDS = int(os.getenv("PARSE_INTERVAL_SECONDS", "1"))
+
+# ══════════════════════════════════════════════════════════════
+# ПАРСИНГ — АЛЬЯНС
+# ══════════════════════════════════════════════════════════════
+
+_ALLIANCE_ID = os.getenv("ALLIANCE_ID", "45")
+ALLIANCE_URL = os.getenv(
+    "ALLIANCE_URL",
+    f"https://mangabuff.ru/alliances/{_ALLIANCE_ID}/boost"
+)
+# Интервал проверки альянса в секундах
+ALLIANCE_CHECK_INTERVAL = int(os.getenv("ALLIANCE_CHECK_INTERVAL", "1"))
 
 # ══════════════════════════════════════════════════════════════
 # TELEGRAM
@@ -49,12 +60,6 @@ REQUIRED_TG_GROUP_ID = int(os.getenv("REQUIRED_TG_GROUP_ID", "0"))
 
 TIMEZONE = os.getenv("TIMEZONE", "Europe/Moscow")
 TZ = pytz.timezone(TIMEZONE)
-
-
-def now_msk() -> datetime:
-    """Текущее время в МСК. Использовать везде вместо datetime.now()."""
-    return datetime.now(TZ)
-
 
 # ══════════════════════════════════════════════════════════════
 # БРОНИРОВАНИЕ

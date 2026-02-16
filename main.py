@@ -12,6 +12,7 @@ from auth import login
 from proxy_manager import ProxyManager
 from rank_detector import RankDetectorImproved
 from parser import parse_loop
+from alliance_parser import alliance_monitor_loop
 from registration import get_registration_handler
 from booking import get_booking_conversation_handler
 from booking_handler import BOOKING_TRIGGER, booking_trigger_handler, get_confirm_booking_handler
@@ -42,63 +43,20 @@ SCHEDULE_TRIGGER = re.compile(
 
 
 # ══════════════════════════════════════════════════════════════
-# ДИАГНОСТИКА ВХОДЯЩИХ СООБЩЕНИЙ
-# ══════════════════════════════════════════════════════════════
-
-
-async def log_all_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Логирует все входящие сообщения для диагностики."""
-    if update.message:
-        chat_type = update.message.chat.type
-        chat_id = update.message.chat.id
-        user = update.message.from_user
-        text = update.message.text
-        
-        logger.info(
-            f"📨 Сообщение получено:\n"
-            f"   Тип чата: {chat_type}\n"
-            f"   ID чата: {chat_id}\n"
-            f"   От: {user.full_name} (@{user.username}, ID: {user.id})\n"
-            f"   Текст: {text}"
-        )
-        
-        # Проверяем триггер бронирования
-        if BOOKING_TRIGGER.search(text or ""):
-            logger.info(f"   ✅ Триггер бронирования обнаружен!")
-            
-            if chat_type in ["group", "supergroup"]:
-                logger.info(f"   ℹ️  Это групповой чат")
-                if chat_id == REQUIRED_TG_GROUP_ID:
-                    logger.info(f"   ✅ Это нужная группа (ID совпадает)")
-                else:
-                    logger.warning(
-                        f"   ⚠️  ID группы не совпадает!\n"
-                        f"      Текущий: {chat_id}\n"
-                        f"      Ожидается: {REQUIRED_TG_GROUP_ID}"
-                    )
-        
-        # Проверяем триггер расписания
-        if SCHEDULE_TRIGGER.search(text or ""):
-            logger.info(f"   ✅ Триггер расписания обнаружен!")
-
-
-# ══════════════════════════════════════════════════════════════
 # ОБРАБОТЧИК ТРИГГЕРА "БРОНИ"
 # ══════════════════════════════════════════════════════════════
 
 
 async def handle_schedule_trigger(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает расписание броней при упоминании слова 'брони'."""
-    logger.info("🔔 Триггер расписания обнаружен!")
-    
     today = get_today_date()
     tomorrow = get_tomorrow_date()
-    
+
     bookings = await get_bookings_for_schedule([today, tomorrow])
     text = format_schedule(bookings, [today, tomorrow])
-    
+
     await update.message.reply_text(text)
-    logger.info("✅ Расписание отправлено")
+    logger.info(f"📋 Расписание отправлено по триггеру от {update.effective_user.id}")
 
 
 # ══════════════════════════════════════════════════════════════
@@ -111,24 +69,24 @@ async def main():
     logger.info("=" * 60)
     logger.info("🚀 Запуск бота мониторинга клуба MangaBuff")
     logger.info("=" * 60)
-    
+
     # Инициализация БД
     await init_db()
-    
+
     # Инициализация прокси-менеджера
     proxy_manager = ProxyManager(enabled=True)
     logger.info("✅ Прокси-менеджер инициализирован")
-    
+
     # Авторизация на сайте
     logger.info("🔐 Авторизация на сайте...")
     session = login(LOGIN_EMAIL, LOGIN_PASSWORD, proxy_manager)
-    
+
     if not session:
         logger.error("❌ Не удалось авторизоваться на сайте")
         return
-    
+
     logger.info("✅ Авторизация успешна")
-    
+
     # Инициализация детектора рангов
     rank_detector = RankDetectorImproved()
     if rank_detector.is_ready:
@@ -139,46 +97,36 @@ async def main():
         )
     else:
         logger.warning("⚠️  Детектор рангов не готов (нет шаблонов)")
-    
+
     # Создание Telegram-бота
     logger.info("🤖 Инициализация Telegram-бота...")
     application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
-    
-    # Сохраняем сессию в bot_data для доступа из handlers
+
     application.bot_data["session"] = session
     application.bot_data["rank_detector"] = rank_detector
-    
+
     # Регистрация handlers
     logger.info("📝 Регистрация обработчиков...")
-    
-    # 0. ДИАГНОСТИКА - логируем ВСЕ сообщения (самый низкий приоритет)
-    application.add_handler(
-        MessageHandler(
-            filters.TEXT & ~filters.COMMAND,
-            log_all_messages
-        ),
-        group=999  # Очень низкий приоритет - выполняется в конце
-    )
-    
+
     # 1. Регистрация
     application.add_handler(get_registration_handler())
-    
+
     # 2. Пользовательские команды
     register_user_handlers(application)
-    
+
     # 3. Команды администратора
     register_admin_handlers(application)
 
-    # 4. FSM бронирования - ТОЛЬКО ДЛЯ ЛИЧНЫХ СООБЩЕНИЙ
+    # 4. FSM бронирования — ТОЛЬКО ДЛЯ ЛИЧНЫХ СООБЩЕНИЙ
     from booking import start_booking_flow, STEP_DATE, STEP_START_TIME, STEP_END_TIME
     from booking import receive_date, receive_start_time, receive_end_time, cancel_booking_flow
 
     booking_conv_private = ConversationHandler(
         entry_points=[
             MessageHandler(
-                filters.TEXT & 
-                filters.Regex(BOOKING_TRIGGER) & 
-                filters.ChatType.PRIVATE &  # ТОЛЬКО личные сообщения
+                filters.TEXT &
+                filters.Regex(BOOKING_TRIGGER) &
+                filters.ChatType.PRIVATE &
                 ~filters.COMMAND,
                 start_booking_flow
             )
@@ -204,52 +152,42 @@ async def main():
         per_message=False
     )
     application.add_handler(booking_conv_private, group=0)
-    
+
     # 5. БРОНИРОВАНИЕ В ГРУППАХ через inline-кнопки
     application.add_handler(
         MessageHandler(
-            filters.TEXT & 
-            filters.Regex(BOOKING_TRIGGER) & 
-            (filters.ChatType.GROUP | filters.ChatType.SUPERGROUP) &  # ТОЛЬКО группы
+            filters.TEXT &
+            filters.Regex(BOOKING_TRIGGER) &
+            (filters.ChatType.GROUP | filters.ChatType.SUPERGROUP) &
             ~filters.COMMAND,
             show_booking_menu
         ),
         group=0
     )
-    
+
     # 6. ПОКАЗ РАСПИСАНИЯ по триггеру "брони"
     application.add_handler(
         MessageHandler(
-            filters.TEXT & 
-            filters.Regex(SCHEDULE_TRIGGER) & 
-            (filters.ChatType.GROUP | filters.ChatType.SUPERGROUP) &  # ТОЛЬКО группы
+            filters.TEXT &
+            filters.Regex(SCHEDULE_TRIGGER) &
+            (filters.ChatType.GROUP | filters.ChatType.SUPERGROUP) &
             ~filters.COMMAND,
             handle_schedule_trigger
         ),
         group=0
     )
-    
+
     # 7. Callback handlers для группового бронирования
     register_group_booking_handlers(application)
-    
+
     # 8. Callback для подтверждения брони
     application.add_handler(get_confirm_booking_handler())
-    
+
     logger.info("✅ Обработчики зарегистрированы")
-    logger.info("")
-    logger.info("=" * 60)
-    logger.info("⚠️  КРИТИЧЕСКИ ВАЖНО ДЛЯ РАБОТЫ В ГРУППАХ:")
-    logger.info("=" * 60)
-    logger.info("1. Откройте @BotFather")
-    logger.info("2. Отправьте: /mybots")
-    logger.info("3. Выберите вашего бота")
-    logger.info("4. Bot Settings → Group Privacy → Turn off")
-    logger.info("=" * 60)
-    logger.info("")
-    
+
     # Инициализация планировщика броней
     scheduler = init_scheduler(application.bot)
-    
+
     # Запуск бота
     logger.info("🚀 Запуск Telegram-бота...")
     await application.initialize()
@@ -264,38 +202,47 @@ async def main():
         parse_loop(session, application.bot, rank_detector)
     )
 
+    # Запуск мониторинга альянса
+    logger.info("🔄 Запуск мониторинга альянса...")
+    alliance_task = asyncio.create_task(
+        alliance_monitor_loop(session, application.bot)
+    )
+
     logger.info("=" * 60)
     logger.info("✅ ВСЕ СИСТЕМЫ ЗАПУЩЕНЫ")
     logger.info("=" * 60)
-    logger.info("")
     logger.info("📋 ДОСТУПНЫЕ ТРИГГЕРЫ В ГРУППАХ:")
-    logger.info("   • 'бронь' / 'забронировать' - открыть меню бронирования")
-    logger.info("   • 'брони' / 'расписание' - показать расписание на сегодня/завтра")
+    logger.info("   • 'бронь' / 'забронировать' — открыть меню бронирования")
+    logger.info("   • 'брони' / 'расписание'    — показать расписание")
+    logger.info("📋 КОМАНДЫ ПОЛЬЗОВАТЕЛЕЙ:")
+    logger.info("   • /alliancehistory — история тайтлов альянса")
     logger.info("=" * 60)
 
     try:
-        # Ожидаем завершения парсера (бот уже запущен через start_polling)
         await parse_task
     except KeyboardInterrupt:
         logger.info("⏹ Получен сигнал остановки")
     finally:
-        # Остановка планировщика
         scheduler.shutdown()
         logger.info("⏹ Планировщик остановлен")
-        
-        # Остановка бота
+
+        alliance_task.cancel()
+        try:
+            await alliance_task
+        except asyncio.CancelledError:
+            pass
+
         await application.updater.stop()
         await application.stop()
         await application.shutdown()
         logger.info("⏹ Бот остановлен")
-        
-        # Закрытие сессии
+
         if hasattr(session, '_session'):
             session._session.close()
         else:
             session.close()
         logger.info("⏹ Сессия закрыта")
-        
+
         logger.info("=" * 60)
         logger.info("👋 Бот завершил работу")
         logger.info("=" * 60)

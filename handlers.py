@@ -12,12 +12,12 @@ from database import (
     get_bookings_for_schedule,
     get_current_card,
     cancel_booking,
-    add_booking_event
+    add_booking_event,
+    mark_group_notified
 )
-from timezone_utils import get_today_date, get_tomorrow_date, format_date_ru, ts_for_db, now_msk
+from timezone_utils import get_today_date, get_tomorrow_date, format_date_ru
 from schedule_view import format_schedule, format_user_history, format_user_bookings
 from notifier import send_booking_cancelled_to_user, notify_group_booking_cancelled
-from database import mark_group_notified
 
 logger = logging.getLogger(__name__)
 
@@ -30,11 +30,11 @@ logger = logging.getLogger(__name__)
 async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает текущую карту клуба."""
     card = await get_current_card()
-    
+
     if not card:
         await update.message.reply_text("📋 Информация о текущей карте недоступна.")
         return
-    
+
     text = (
         f"🃏 Текущая карта клуба:\n\n"
         f"ID: {card.card_id} | Ранг: {card.card_rank}\n\n"
@@ -42,7 +42,7 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"📅 Вложено сегодня: {card.daily_donated}\n"
         f"👥 Владельцев в клубе: {len(card.club_owners)}"
     )
-    
+
     if card.card_image_url:
         await update.message.reply_photo(
             photo=card.card_image_url,
@@ -55,16 +55,16 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def myaccount_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает информацию о привязанном аккаунте."""
     user = await get_user(update.effective_user.id)
-    
+
     if not user or not user.is_verified:
         await update.message.reply_text(
             "❌ Аккаунт не привязан.\n"
             "Используй /start для регистрации."
         )
         return
-    
+
     status = "✅ Активен" if user.is_active else "⏸ Приостановлен"
-    
+
     text = (
         f"👤 Мой аккаунт:\n\n"
         f"Telegram: {user.tg_nickname}\n"
@@ -73,70 +73,69 @@ async def myaccount_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"📊 Статус уведомлений: {status}\n"
         f"📅 Зарегистрирован: {user.created_at[:10]}"
     )
-    
+
     await update.message.reply_text(text)
 
 
 async def unlink_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Отвязывает аккаунт MangaBuff."""
     user = await get_user(update.effective_user.id)
-    
+
     if not user:
         await update.message.reply_text("❌ Аккаунт не привязан.")
         return
-    
+
     await delete_user(update.effective_user.id)
-    
+
     await update.message.reply_text(
         "✅ Аккаунт отвязан.\n"
         "Уведомления о картах прекращены.\n\n"
         "Для повторной привязки используй /start"
     )
-    
+
     logger.info(f"Пользователь {user.tg_nickname} отвязал аккаунт")
 
 
 async def mybookings_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает активные брони пользователя."""
     user = await get_user(update.effective_user.id)
-    
+
     if not user or not user.is_verified:
         await update.message.reply_text(
             "❌ Для просмотра броней нужно привязать аккаунт.\n"
             "Используй /start"
         )
         return
-    
+
     today = get_today_date()
     tomorrow = get_tomorrow_date()
-    
+
     bookings = await get_user_active_bookings(user.tg_id, [today, tomorrow])
     text = format_user_bookings(bookings)
-    
+
     await update.message.reply_text(text)
 
 
 async def cancelbooking_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Отменяет активную бронь пользователя."""
     user = await get_user(update.effective_user.id)
-    
+
     if not user or not user.is_verified:
         await update.message.reply_text(
             "❌ Для отмены брони нужно привязать аккаунт.\n"
             "Используй /start"
         )
         return
-    
+
     today = get_today_date()
     tomorrow = get_tomorrow_date()
-    
+
     bookings = await get_user_active_bookings(user.tg_id, [today, tomorrow])
-    
+
     if not bookings:
         await update.message.reply_text("📋 У тебя нет активных броней.")
         return
-    
-    # Отменяем все активные брони пользователя
+
     for booking in bookings:
         await cancel_booking(
             booking.id,
@@ -144,24 +143,20 @@ async def cancelbooking_command(update: Update, context: ContextTypes.DEFAULT_TY
             cancel_reason="Отменена пользователем",
             actor_tg_id=user.tg_id
         )
-        
+
         await add_booking_event(
             booking.id,
             "cancelled_user",
             "user",
             actor_tg_id=user.tg_id
         )
-        
-        # Уведомляем пользователя
-        bot = context.bot
-        await send_booking_cancelled_to_user(bot, booking)
-        
-        # Уведомляем группу
-        await notify_group_booking_cancelled(bot, booking, "user")
+
+        await send_booking_cancelled_to_user(context.bot, booking)
+        await notify_group_booking_cancelled(context.bot, booking, "user")
         await mark_group_notified(booking.id)
-        
+
         logger.info(f"Пользователь {user.tg_nickname} отменил бронь #{booking.id}")
-    
+
     await update.message.reply_text(
         f"✅ Бронь отменена.\n"
         f"Слот освобождён для других участников."
@@ -171,37 +166,57 @@ async def cancelbooking_command(update: Update, context: ContextTypes.DEFAULT_TY
 async def myhistory_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает историю броней пользователя."""
     user = await get_user(update.effective_user.id)
-    
+
     if not user or not user.is_verified:
         await update.message.reply_text(
             "❌ Для просмотра истории нужно привязать аккаунт.\n"
             "Используй /start"
         )
         return
-    
+
     bookings = await get_user_booking_history(user.tg_id, limit=20)
     text = format_user_history(bookings)
-    
+
     await update.message.reply_text(text)
+
+
+async def alliancehistory_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает историю тайтлов альянса."""
+    from database import get_alliance_history
+
+    history = await get_alliance_history(limit=10)
+
+    if not history:
+        await update.message.reply_text("📜 История альянса пуста.")
+        return
+
+    text = "📜 История тайтлов альянса (последние 10):\n\n"
+    for i, entry in enumerate(history, 1):
+        discovered = entry.get("discovered_at", "")[:16].replace("T", " ")
+        title = entry.get("title") or entry.get("slug") or "?"
+        text += f"{i}. <b>{title}</b>\n"
+        text += f"   ⏰ {discovered}\n\n"
+
+    await update.message.reply_text(text, parse_mode="HTML")
 
 
 async def schedule_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает расписание броней на сегодня и завтра."""
     user = await get_user(update.effective_user.id)
-    
+
     if not user or not user.is_verified:
         await update.message.reply_text(
             "❌ Для просмотра расписания нужно привязать аккаунт.\n"
             "Используй /start"
         )
         return
-    
+
     today = get_today_date()
     tomorrow = get_tomorrow_date()
-    
+
     bookings = await get_bookings_for_schedule([today, tomorrow])
     text = format_schedule(bookings, [today, tomorrow])
-    
+
     await update.message.reply_text(text)
 
 
@@ -219,5 +234,6 @@ def register_user_handlers(application):
     application.add_handler(CommandHandler("cancelbooking", cancelbooking_command))
     application.add_handler(CommandHandler("myhistory", myhistory_command))
     application.add_handler(CommandHandler("schedule", schedule_command))
-    
+    application.add_handler(CommandHandler("alliancehistory", alliancehistory_command))
+
     logger.info("✅ Пользовательские команды зарегистрированы")
