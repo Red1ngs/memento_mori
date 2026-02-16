@@ -26,6 +26,8 @@ class BoostPageParser:
         self.session = session
         self.rank_detector = rank_detector
         self.url = f"{BASE_URL}{CLUB_BOOST_PATH}"
+        self._consecutive_errors = 0
+        self._max_consecutive_errors = 5
         
     def parse(self) -> Optional[Dict[str, Any]]:
         """
@@ -39,6 +41,7 @@ class BoostPageParser:
             
             if response.status_code != 200:
                 logger.error(f"Ошибка загрузки страницы: {response.status_code}")
+                self._mark_error()
                 return None
             
             soup = BeautifulSoup(response.text, "html.parser")
@@ -47,6 +50,7 @@ class BoostPageParser:
             card_id = self._extract_card_id(soup)
             if not card_id:
                 logger.error("Не удалось извлечь card_id")
+                self._mark_error()
                 return None
             
             card_image_url = self._extract_card_image(soup)
@@ -54,7 +58,8 @@ class BoostPageParser:
             daily_donated = self._extract_daily_donated(soup)
             club_owners = self._extract_club_owners(soup)
             
-            # НЕ определяем ранг здесь - это будет делаться в parse_loop только при смене карты
+            # Успешный парсинг - сбрасываем счётчик ошибок
+            self._mark_success()
             
             return {
                 "card_id": card_id,
@@ -66,9 +71,37 @@ class BoostPageParser:
                 "discovered_at": ts_for_db(now_msk())
             }
             
+        except (requests.exceptions.ProxyError, 
+                requests.exceptions.ConnectionError,
+                requests.exceptions.Timeout) as e:
+            self._mark_error()
+            logger.error(f"Ошибка сети при парсинге: {type(e).__name__}")
+            
+            # При проблемах с прокси - ротация
+            if hasattr(self.session, '_session') and hasattr(self.session._session, 'proxies'):
+                # Это RateLimitedSession с прокси
+                from proxy_manager import ProxyManager
+                # Уведомляем прокси-менеджер об ошибке через главный цикл
+                
+            return None
+            
         except Exception as e:
+            self._mark_error()
             logger.error(f"Ошибка парсинга: {e}", exc_info=True)
             return None
+    
+    def _mark_success(self):
+        """Отмечает успешный парсинг."""
+        self._consecutive_errors = 0
+    
+    def _mark_error(self):
+        """Отмечает ошибку парсинга."""
+        self._consecutive_errors += 1
+        if self._consecutive_errors >= self._max_consecutive_errors:
+            logger.warning(
+                f"⚠️ {self._consecutive_errors} ошибок парсинга подряд - "
+                f"возможна проблема с прокси"
+            )
     
     def _extract_card_id(self, soup: BeautifulSoup) -> Optional[int]:
         """Извлекает ID карты из ссылки /cards/{id}/users."""
@@ -131,7 +164,7 @@ class BoostPageParser:
 
 async def parse_loop(session: requests.Session, bot, rank_detector: RankDetectorImproved):
     """
-    Основной цикл парсинга.
+    Основной цикл парсинга с автоматической ротацией прокси при ошибках.
     
     Args:
         session: авторизованная сессия
@@ -144,6 +177,9 @@ async def parse_loop(session: requests.Session, bot, rank_detector: RankDetector
     parser = BoostPageParser(session, rank_detector)
     logger.info("🔄 Запущен цикл парсинга страницы boost")
     
+    consecutive_failures = 0
+    max_consecutive_failures = 5
+    
     while True:
         try:
             # Получаем текущую карту из БД перед парсингом
@@ -153,6 +189,8 @@ async def parse_loop(session: requests.Session, bot, rank_detector: RankDetector
             data = parser.parse()
             
             if data:
+                consecutive_failures = 0  # Сброс счётчика при успехе
+                
                 # Проверяем, изменилась ли карта
                 if current is None or current.card_id != data["card_id"]:
                     logger.info(
@@ -182,9 +220,35 @@ async def parse_loop(session: requests.Session, bot, rank_detector: RankDetector
                     logger.info(
                         f"✅ Новая карта ID {data['card_id']} (Ранг: {data['card_rank']})"
                     )
+            else:
+                consecutive_failures += 1
+                
+                # При накоплении ошибок - попытка ротации прокси
+                if consecutive_failures >= max_consecutive_failures:
+                    logger.warning(
+                        f"⚠️ {consecutive_failures} неудач парсинга подряд - "
+                        f"пытаемся сменить прокси"
+                    )
+                    
+                    # Если используется RateLimitedSession с прокси
+                    if hasattr(session, '_session'):
+                        from auth import create_session
+                        from config import LOGIN_EMAIL, LOGIN_PASSWORD
+                        
+                        # Пытаемся получить прокси-менеджер из bot_data
+                        try:
+                            proxy_manager = bot._application.bot_data.get("proxy_manager")
+                            if proxy_manager:
+                                proxy_manager.mark_failure()
+                                logger.info("🔄 Прокси-менеджер уведомлён об ошибке")
+                        except Exception as e:
+                            logger.debug(f"Не удалось уведомить прокси-менеджер: {e}")
+                    
+                    consecutive_failures = 0  # Сброс счётчика после попытки ротации
             
         except Exception as e:
             logger.error(f"Ошибка в цикле парсинга: {e}", exc_info=True)
+            consecutive_failures += 1
         
         # Ждём перед следующей итерацией
         await asyncio.sleep(PARSE_INTERVAL_SECONDS)

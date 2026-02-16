@@ -128,7 +128,9 @@ async def handle_start_time_selection(update: Update, context: ContextTypes.DEFA
 
     parts = query.data.split(":")
     date = parts[1]
-    start_time = parts[2]
+    # ИСПРАВЛЕНО: Время формата HH:MM разбивается на parts[2] и parts[3]
+    # callback_data: "book_start:2026-02-16:21:00" -> ["book_start", "2026-02-16", "21", "00"]
+    start_time = f"{parts[2]}:{parts[3]}"
 
     busy_bookings = await get_bookings_for_schedule([date])
     available_slots = get_available_end_slots(date, start_time, busy_bookings)
@@ -167,8 +169,10 @@ async def handle_end_time_selection(update: Update, context: ContextTypes.DEFAUL
     user = query.from_user
     parts = query.data.split(":")
     date = parts[1]
-    start_time = parts[2]
-    end_time = parts[3]
+    # ИСПРАВЛЕНО: Правильный парсинг времени
+    # callback_data: "book_end:2026-02-16:21:00:22:00" -> ["book_end", "2026-02-16", "21", "00", "22", "00"]
+    start_time = f"{parts[2]}:{parts[3]}"
+    end_time = f"{parts[4]}:{parts[5]}"
 
     db_user = await get_verified_user(user.id)
     if not db_user:

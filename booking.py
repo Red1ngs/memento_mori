@@ -246,7 +246,6 @@ async def receive_end_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(
         f"✅ Бронь успешно создана!\n\n"
-        f"🃏 Назначение: внос карт в клуб Таро\n"
         f"📅 Дата: {format_date_ru(date)}\n"
         f"🕐 Время: {start_time} — {end_time} МСК\n"
         f"⏱ Длительность: {format_duration(duration_hours)}\n"

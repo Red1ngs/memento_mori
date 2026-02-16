@@ -61,6 +61,7 @@ def format_active_bookings_text(bookings: List[Booking], for_group: bool = False
         text += (
             f"{status_emoji} {format_date_ru(b.date)} | "
             f"🕐 {b.start_time} — {b.end_time} МСК\n"
+            f"Для отмены брони используй команду: /cancelbooking {b.id}\n"
         )
 
     if for_group:

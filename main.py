@@ -74,7 +74,7 @@ async def main():
     await init_db()
 
     # Инициализация прокси-менеджера
-    proxy_manager = ProxyManager(enabled=True)
+    proxy_manager = ProxyManager(enabled=False)
     logger.info("✅ Прокси-менеджер инициализирован")
 
     # Авторизация на сайте

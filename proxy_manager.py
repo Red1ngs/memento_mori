@@ -1,4 +1,4 @@
-"""Менеджер прокси для ротации."""
+"""Менеджер прокси для ротации с автоматическим восстановлением."""
 
 import logging
 from typing import Optional, Dict
@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 
 class ProxyManager:
-    """Менеджер прокси с автоматической ротацией."""
+    """Менеджер прокси с автоматической ротацией и восстановлением."""
     
     def __init__(self, enabled: bool = True):
         """
@@ -21,6 +21,8 @@ class ProxyManager:
         self._enabled = enabled
         self._current_proxy: Optional[str] = None
         self._failed_proxies: set = set()
+        self._consecutive_failures = 0  # Счётчик последовательных ошибок
+        self._max_consecutive_failures = 3  # После скольки ошибок искать новый прокси
     
     def is_enabled(self) -> bool:
         """Проверяет, включены ли прокси."""
@@ -36,8 +38,17 @@ class ProxyManager:
         if not self._enabled:
             return None
         
+        # Если накопилось много ошибок подряд - принудительная ротация
+        if self._consecutive_failures >= self._max_consecutive_failures:
+            logger.warning(
+                f"⚠️ {self._consecutive_failures} ошибок подряд - "
+                f"принудительная ротация прокси"
+            )
+            self.rotate()
+            self._consecutive_failures = 0
+        
         # Если есть рабочий прокси, используем его
-        if self._current_proxy and self._test_proxy(self._current_proxy):
+        if self._current_proxy:
             return self._format_proxy(self._current_proxy)
         
         # Иначе ищем новый
@@ -47,9 +58,24 @@ class ProxyManager:
         """Принудительная ротация прокси."""
         if self._current_proxy:
             self._failed_proxies.add(self._current_proxy)
-            logger.info(f"Прокси {self._current_proxy} помечен как неработающий")
+            logger.info(f"🔄 Прокси {self._current_proxy} помечен как неработающий")
         
         self._current_proxy = None
+        self._consecutive_failures = 0
+    
+    def mark_success(self):
+        """Отмечает успешный запрос (сбрасывает счётчик ошибок)."""
+        self._consecutive_failures = 0
+    
+    def mark_failure(self):
+        """Отмечает неудачный запрос."""
+        self._consecutive_failures += 1
+        
+        if self._consecutive_failures >= self._max_consecutive_failures:
+            logger.warning(
+                f"⚠️ Прокси {self._current_proxy} нестабилен "
+                f"({self._consecutive_failures} ошибок подряд)"
+            )
     
     def _find_working_proxy(self) -> Optional[Dict[str, str]]:
         """Ищет рабочий прокси из указанных стран."""
@@ -66,11 +92,13 @@ class ProxyManager:
                 
                 # Пропускаем уже проваленные прокси
                 if proxy in self._failed_proxies:
+                    logger.debug(f"Прокси {proxy} уже был в списке проваленных, пропускаем")
                     continue
                 
                 # Тестируем прокси
                 if self._test_proxy(proxy):
                     self._current_proxy = proxy
+                    self._consecutive_failures = 0
                     logger.info(f"✅ Найден рабочий прокси: {proxy}")
                     return self._format_proxy(proxy)
                 else:
@@ -103,7 +131,8 @@ class ProxyManager:
             )
             return response.status_code == 200
             
-        except Exception:
+        except Exception as e:
+            logger.debug(f"Тест прокси {proxy} провалился: {e}")
             return False
     
     @staticmethod
@@ -113,13 +142,16 @@ class ProxyManager:
     
     def clear_failed(self):
         """Очищает список проваленных прокси."""
+        count = len(self._failed_proxies)
         self._failed_proxies.clear()
-        logger.info("Список проваленных прокси очищен")
+        self._consecutive_failures = 0
+        logger.info(f"Очищен список из {count} проваленных прокси")
     
     def get_stats(self) -> Dict:
         """Возвращает статистику."""
         return {
             "enabled": self._enabled,
             "current_proxy": self._current_proxy,
-            "failed_count": len(self._failed_proxies)
+            "failed_count": len(self._failed_proxies),
+            "consecutive_failures": self._consecutive_failures
         }
