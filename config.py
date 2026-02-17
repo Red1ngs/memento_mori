@@ -59,6 +59,10 @@ REQUIRED_TG_GROUP_ID = int(os.getenv("REQUIRED_TG_GROUP_ID", "0"))
 # Chat ID для API: -1002477784115 (нужно добавить -100 к числу из ссылки)
 GROUP_CARD_TOPIC_ID = int(os.getenv("GROUP_CARD_TOPIC_ID", "128484"))
 
+# ID топика для уведомлений о смене тайтла в альянсе
+# Ссылка на топик: https://t.me/c/2477784115/128570
+GROUP_ALLIANCE_TOPIC_ID = int(os.getenv("GROUP_ALLIANCE_TOPIC_ID", "128570"))
+
 # ══════════════════════════════════════════════════════════════
 # ЧАСОВОЙ ПОЯС
 # ══════════════════════════════════════════════════════════════

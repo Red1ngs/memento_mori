@@ -5,7 +5,7 @@ from typing import Dict, Any, List, Tuple
 from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.error import TelegramError
 
-from config import BASE_URL, CLUB_BOOST_PATH, REQUIRED_TG_GROUP_ID, GROUP_CARD_TOPIC_ID
+from config import BASE_URL, CLUB_BOOST_PATH, REQUIRED_TG_GROUP_ID, GROUP_CARD_TOPIC_ID, GROUP_ALLIANCE_TOPIC_ID
 from database import get_user_by_mangabuff_id, Booking
 from timezone_utils import format_date_ru, format_time_range, now_msk
 
@@ -398,7 +398,7 @@ async def notify_alliance_manga_changed(
     is_startup: bool = False
 ) -> bool:
     """
-    Отправляет уведомление о смене тайтла в альянсе.
+    Отправляет уведомление о смене тайтла в альянсе в топик группы.
 
     Args:
         bot: экземпляр Telegram бота
@@ -409,7 +409,6 @@ async def notify_alliance_manga_changed(
         True если успешно
     """
     from datetime import datetime as dt
-    from config import REQUIRED_TG_GROUP_ID
 
     title = manga_info.get("title", manga_info.get("slug", "???"))
     image = manga_info.get("image")
@@ -429,24 +428,28 @@ async def notify_alliance_manga_changed(
         f"⏰ {now_str}"
     )
 
+    send_kwargs = {
+        "chat_id": REQUIRED_TG_GROUP_ID,
+        "parse_mode": "HTML",
+        "message_thread_id": GROUP_ALLIANCE_TOPIC_ID,
+    }
+
     try:
         if image:
             await bot.send_photo(
-                chat_id=REQUIRED_TG_GROUP_ID,
                 photo=image,
                 caption=text,
-                parse_mode="HTML"
+                **send_kwargs
             )
         else:
             await bot.send_message(
-                chat_id=REQUIRED_TG_GROUP_ID,
                 text=text,
-                parse_mode="HTML"
+                **send_kwargs
             )
 
         logger.info(
-            f"✅ Уведомление альянса отправлено: {title} "
-            f"({'старт' if is_startup else 'смена'})"
+            f"✅ Уведомление альянса отправлено в топик {GROUP_ALLIANCE_TOPIC_ID}: "
+            f"{title} ({'старт' if is_startup else 'смена'})"
         )
         return True
 
