@@ -111,7 +111,6 @@ def parse_alliance_club_contributions(html: str, club_page: str = CLUB_PAGE_ATTR
 
         match = re.search(r"/users/(\d+)", href)
         mangabuff_id = int(match.group(1)) if match else 0
-
         profile_url = (f"{BASE_URL}{href}" if href.startswith("/") else href)
 
         contrib_el = item.select_one(".club-boost__top-contribution")
@@ -265,8 +264,16 @@ async def clear_pinned_alliance_message(chat_id: int):
 
 def format_alliance_weekly_message(rows: List[Dict], week_start: str) -> str:
     """
-    Формат каждой строки (одна строка на участника):
-    🥇 <ник> — Старт: 9147 → 9147 (+0)
+    Формат: одна строка на участника, медали для топ-3, пустая строка
+    между медалистами и остальными для читаемости.
+
+    Пример:
+    🥇 SweetDreams — 91520 → 91553 (+33)
+    🥈 Ака17 — 25785 → 25785 (+0)
+    🥉 Жрец смерти — 9147 → 9147 (+0)
+
+    4. NedocheloveK — 8627 → 8627 (+0)
+    5. Валерий Г — 5465 → 5465 (+0)
     """
     date_range = format_alliance_week_range(week_start)
 
@@ -277,30 +284,36 @@ def format_alliance_weekly_message(rows: List[Dict], week_start: str) -> str:
         )
 
     medals = {1: "🥇", 2: "🥈", 3: "🥉"}
-    lines = []
+    medal_lines = []
+    rest_lines  = []
 
     for i, r in enumerate(rows, 1):
-        prefix    = medals.get(i, f"{i}.")
         url       = r.get("profile_url", "")
         nick      = r["nick"]
         base      = r["contribution_baseline"]
         curr      = r["contribution_current"]
         delta     = curr - base
         delta_str = f"+{delta}" if delta >= 0 else str(delta)
-
         name_part = f'<a href="{url}">{nick}</a>' if url else nick
 
-        # Всё в одну строку
-        lines.append(
-            f"{prefix} {name_part} — {base} → <b>{curr}</b> ({delta_str})"
-        )
+        line = f"{medals[i] if i in medals else f'{i}.'} {name_part} — {base} → <b>{curr}</b> ({delta_str})"
 
-    updated = now_msk().strftime("%d.%m %H:%M МСК")
+        if i <= 3:
+            medal_lines.append(line)
+        else:
+            rest_lines.append(line)
+
+    updated     = now_msk().strftime("%d.%m %H:%M МСК")
     total_delta = sum(r["contribution_current"] - r["contribution_baseline"] for r in rows)
+
+    # Медалисты отделены пустой строкой от остальных
+    body = "\n".join(medal_lines)
+    if rest_lines:
+        body += "\n\n" + "\n".join(rest_lines)
 
     return (
         f"🏰 <b>Вклад клуба в альянс</b> ({date_range})\n\n"
-        + "\n".join(lines)
+        + body
         + f"\n\n📈 Прирост за неделю: <b>+{total_delta}</b>"
         + f"\n🕐 <i>Обновлено: {updated}</i>"
     )
@@ -323,9 +336,7 @@ async def send_or_update_alliance_pinned(
     pinned_info = await get_pinned_alliance_message(chat_id)
 
     if pinned_info and pinned_info.get("week_start") != week_start:
-        logger.info(
-            f"[Alliance] Смена недели: {pinned_info['week_start']} → {week_start}"
-        )
+        logger.info(f"[Alliance] Смена недели → создаём новое сообщение")
         pinned_info = None
 
     if pinned_info:
@@ -354,7 +365,6 @@ async def send_or_update_alliance_pinned(
                 logger.error(f"[Alliance] Ошибка edit_message_text: {e}")
                 return
 
-    # Отправляем новое сообщение
     try:
         msg = await bot.send_message(
             chat_id=chat_id,
@@ -363,8 +373,6 @@ async def send_or_update_alliance_pinned(
             message_thread_id=thread_id,
             disable_web_page_preview=True,
         )
-
-        # Закрепляем без уведомления
         try:
             await bot.pin_chat_message(
                 chat_id=chat_id,
@@ -375,8 +383,7 @@ async def send_or_update_alliance_pinned(
         except TelegramError as e:
             logger.warning(
                 f"[Alliance] Не удалось закрепить: {e}\n"
-                "Убедись что бот является администратором группы "
-                "с правом 'Закреплять сообщения'"
+                "Убедись что бот — администратор с правом 'Закреплять сообщения'"
             )
 
         await save_pinned_alliance_message(chat_id, thread_id, msg.message_id, week_start)
